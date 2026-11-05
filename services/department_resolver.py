@@ -30,7 +30,9 @@ class ConfigurationError(RuntimeError):
 
 
 def normalize(text: str | None) -> str:
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).split())
+    # "&" == "and", so "IT & Integration" matches NetSuite's "IT and Integration".
+    text = (text or "").lower().replace("&", " and ")
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", text).split())
 
 
 def leaf(text: str | None) -> str:

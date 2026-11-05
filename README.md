@@ -103,7 +103,71 @@ fallback, dry-run, state and field-loss paths.
 - **Coding endpoint.** Run a sandbox write first and check that
   `POST /accounting/codings` keeps the transaction's other coded fields. The
   post-write check will stop the run if it doesn't.
-- **Webhook mode.** For webhook mode, call
-  `TransactionProcessor.process_transaction(client.get_transaction(id))` from
-  a `transactions.*` webhook handler; see the `ramp-division-webhook` project
-  for the server and signature-verification pattern.
+
+## Webhook server (real time)
+
+`server/` runs the same `TransactionProcessor` as an HTTP service, so a
+transaction is coded seconds after it clears instead of on the next poll.
+Same settings, same rules, same `DRY_RUN` switch. The CLI stays available
+for backfills and one-off checks.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | `{"status": "healthy"}` |
+| `POST /webhooks/ramp` | Ramp events. Only `transactions.cleared` is processed |
+
+How an event is handled:
+
+1. `webhooks.verification` (subscription setup) is answered automatically:
+   the server finds the one `pending_verification` subscription and echoes
+   the challenge. This uses a separate `webhooks:read webhooks:write` token,
+   so the main token's scopes don't change.
+2. Every other event must carry a valid `X-Ramp-Signature` (HMAC-SHA256 of the
+   raw body with `RAMP_WEBHOOK_SECRET`), or it gets `401`. If the secret is
+   blank, events are accepted unverified and a warning is logged at startup.
+   That is meant only for the gap between registering and setting the secret.
+3. The server returns `202` immediately. A background task fetches the
+   transaction and runs it through the processor. Transactions are processed
+   one at a time.
+4. Repeat deliveries of the same event id are dropped in memory. The state
+   store still blocks a second write.
+5. If a write is detected to have dropped other coded fields, the server stops
+   writing entirely until it is restarted, the same way the CLI aborts its run.
+
+### Run locally
+
+```powershell
+python -m pip install -r requirements.txt
+uvicorn server.app:create_app --factory --host 0.0.0.0 --port 8000
+```
+
+To receive real events locally, expose the port with a tunnel (e.g.
+`ngrok http 8000`) and register the tunnel URL as below.
+
+### Deploy (Render)
+
+`render.yaml` defines a free web service that starts with
+`uvicorn server.app:create_app --factory --host 0.0.0.0 --port $PORT`.
+
+1. Deploy with `DRY_RUN=true` and `RAMP_WEBHOOK_SECRET` blank.
+2. Register the subscription. Ramp sends the verification challenge right away:
+   ```powershell
+   python -m scripts.register_webhook https://<service>.onrender.com/webhooks/ramp
+   ```
+   The registering credentials need `webhooks:read`, `webhooks:write` and
+   `transactions:read`.
+3. Put the printed secret in `RAMP_WEBHOOK_SECRET` and redeploy.
+4. Check the `would_apply` / `mismatch_*` lines in the logs, then set
+   `DRY_RUN=false`.
+
+Notes:
+
+- **state.db is not persistent** on Render's free tier; it resets on every
+  deploy or restart. That's safe, because the processor never overwrites a
+  department that is already set. After a reset, though, `mismatch_*`
+  transactions can be logged again.
+- **Ramp doesn't redeliver events that got a 2xx.** Anything that cleared
+  while the service was down or failing has to be caught up with the CLI, e.g.
+  `python -m scripts.sync_transactions --since 7d`.
+- **Free Render services sleep when idle.** The first event after a quiet
+  period also wakes the service, which takes a few seconds.

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: ramp-department-webhook
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server.app:create_app --factory --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: RAMP_CLIENT_ID
+        sync: false
+      - key: RAMP_CLIENT_SECRET
+        sync: false
+      - key: RAMP_WEBHOOK_SECRET
+        sync: false
+      - key: RAMP_ENVIRONMENT
+        value: production
+      - key: NETSUITE_DEPARTMENT_TRACKING_CATEGORY_ID
+        value: "9a9399e2-2daa-4c38-b82b-95e516bc00f1"  # Department field, verified 2026-11-05
+      # Kill switch. Starts in dry run (logs what it WOULD code, writes nothing).
+      # Flip to "false" in the Render dashboard once the logs look right.
+      - key: DRY_RUN
+        value: "true"

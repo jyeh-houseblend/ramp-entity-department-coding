@@ -101,6 +101,12 @@ def test_hierarchical_netsuite_name_matches_leaf(fake, client):
     assert result.department == "G&A : Operations"
 
 
+def test_ampersand_matches_and():
+    from services.department_resolver import normalize
+    assert normalize("IT & Integration") == normalize("IT and Integration")
+    assert normalize("S&M") == normalize("S&M") != normalize("SM")
+
+
 def test_no_matching_option(fake, client):
     fake.options = [o for o in fake.options if o["value"] != "Sales"]
     result = run_one(fake, client, make_txn("t11", "u-parent", PARENT))

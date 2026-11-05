@@ -30,6 +30,8 @@ class FakeRamp:
     fail_next: list = field(default_factory=list)      # status codes to return first
     token_requests: int = 0
     drop_other_fields_on_write: bool = False
+    webhooks: list = field(default_factory=list)       # GET /webhooks
+    verified: list = field(default_factory=list)       # (webhook_id, challenge)
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -65,6 +67,11 @@ class FakeRamp:
         if p == "/accounting/field-options":
             assert request.url.params["field_id"] == DEPT_FIELD_RAMP_ID
             return httpx.Response(200, json={"data": self.options, "page": {"next": None}})
+        if p == "/webhooks" and request.method == "GET":
+            return httpx.Response(200, json=self.webhooks)
+        if p.startswith("/webhooks/") and p.endswith("/verify"):
+            self.verified.append((p.split("/")[2], json.loads(request.content)["challenge"]))
+            return httpx.Response(200, json={"success": True})
         if p == "/accounting/codings" and request.method == "POST":
             body = json.loads(request.content)
             self.codings.append(body)
